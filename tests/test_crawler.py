@@ -3,7 +3,7 @@
 import threading
 import time
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from crawler.crawler import Crawler
 from crawler.fetcher import Fetcher
 from crawler.models import ErrorType
@@ -331,3 +331,91 @@ def test_logs_warning_when_page_fails(caplog):
 
     warning_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
     assert any("https://example.com/" in m for m in warning_msgs)
+
+
+# ---------------------------------------------------------------------------
+# robots.txt
+# ---------------------------------------------------------------------------
+
+def test_does_not_crawl_disallowed_url():
+    """URLs blocked by robots.txt must never be fetched."""
+    html_with_admin = """
+    <html><body>
+        <a href="/about">About</a>
+        <a href="/admin/secret">Admin</a>
+    </body></html>
+    """
+    fetcher = make_fetcher({
+        "https://example.com/": html_with_admin,
+        "https://example.com/about": ABOUT_HTML,
+    })
+
+    from urllib.robotparser import RobotFileParser
+    robots = RobotFileParser()
+    robots.parse(["User-agent: *", "Disallow: /admin/"])
+
+    crawler = Crawler("https://example.com/", fetcher=fetcher, robots=robots)
+    results = crawler.crawl()
+
+    visited = {r.url for r in results}
+    assert "https://example.com/admin/secret" not in visited
+
+
+def test_crawls_allowed_urls_when_robots_permits():
+    """URLs not blocked by robots.txt should still be crawled."""
+    fetcher = make_fetcher({
+        "https://example.com/": HOME_HTML,
+        "https://example.com/about": ABOUT_HTML,
+    })
+
+    from urllib.robotparser import RobotFileParser
+    robots = RobotFileParser()
+    robots.parse(["User-agent: *", "Disallow: /private/"])
+
+    crawler = Crawler("https://example.com/", fetcher=fetcher, robots=robots)
+    results = crawler.crawl()
+
+    visited = {r.url for r in results}
+    assert "https://example.com/about" in visited
+
+
+def test_crawls_everything_if_no_robots_txt():
+    """If robots.txt is unavailable, treat all URLs as allowed."""
+    fetcher = make_fetcher({
+        "https://example.com/": HOME_HTML,
+        "https://example.com/about": ABOUT_HTML,
+    })
+
+    # No robots param — crawler should fetch robots.txt itself and get an error,
+    # then allow all URLs
+    crawler = Crawler("https://example.com/", fetcher=fetcher)
+    results = crawler.crawl()
+
+    visited = {r.url for r in results}
+    assert "https://example.com/about" in visited
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting
+# ---------------------------------------------------------------------------
+
+def test_rate_limit_sleeps_between_fetches():
+    """With rate_limit set, time.sleep should be called after each fetch."""
+    fetcher = make_fetcher({"https://example.com/": HOME_HTML})
+
+    with patch("crawler.crawler.time.sleep") as mock_sleep:
+        crawler = Crawler("https://example.com/", fetcher=fetcher, rate_limit=0.5)
+        crawler.crawl()
+
+    mock_sleep.assert_called_with(0.5)
+
+
+def test_no_sleep_when_rate_limit_is_zero():
+    """Default behaviour — no sleep between fetches."""
+    fetcher = make_fetcher({"https://example.com/": HOME_HTML})
+
+    with patch("crawler.crawler.time.sleep") as mock_sleep:
+        crawler = Crawler("https://example.com/", fetcher=fetcher, rate_limit=0.0)
+        crawler.crawl()
+
+    mock_sleep.assert_not_called()

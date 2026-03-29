@@ -7,6 +7,7 @@ import time
 import queue
 from typing import List, Optional
 from urllib.parse import urlparse
+from urllib.robotparser import RobotFileParser
 
 from .fetcher import Fetcher
 from .models import PageResult
@@ -31,6 +32,8 @@ class Crawler:
         fetcher: Optional[Fetcher] = None,
         max_workers: int = 10,
         items_per_worker: int = 5,
+        rate_limit: float = 0.0,
+        robots: Optional[RobotFileParser] = None,
     ) -> None:
         self._start_url = start_url
         self._allowed_domain = urlparse(start_url).netloc
@@ -38,6 +41,8 @@ class Crawler:
         self._parser = Parser()
         self._max_workers = max_workers
         self._items_per_worker = items_per_worker
+        self._rate_limit = rate_limit
+        self._robots = robots  # None means: load from site at crawl start
 
     def crawl(self) -> List[PageResult]:
         """Crawl the subdomain and return one PageResult per visited URL."""
@@ -45,6 +50,8 @@ class Crawler:
             f"Crawl started: {self._start_url} (max_workers={self._max_workers}, items_per_worker={self._items_per_worker})"
         )
         start_time = time.time()
+
+        robots = self._robots if self._robots is not None else self._load_robots()
 
         url_queue: queue.Queue = queue.Queue()
         url_queue.put(self._start_url)
@@ -86,9 +93,16 @@ class Crawler:
                     for link in result.links:
                         with visited_lock:
                             already_seen = link in visited
-                        if not already_seen and self._is_same_domain(link):
+                        if (
+                            not already_seen
+                            and self._is_same_domain(link)
+                            and robots.can_fetch("*", link)
+                        ):
                             url_queue.put(link)
                             self._maybe_scale_up(url_queue, threads, threads_lock, worker)
+
+                    if self._rate_limit > 0:
+                        time.sleep(self._rate_limit)
 
                 finally:
                     url_queue.task_done()
@@ -174,3 +188,20 @@ class Crawler:
 
     def _is_same_domain(self, url: str) -> bool:
         return urlparse(url).netloc == self._allowed_domain
+
+    def _load_robots(self) -> RobotFileParser:
+        """Fetch and parse robots.txt for the start domain.
+
+        Think of it like reading the "house rules" sign before entering a building.
+        If there's no sign (404 or error), we assume everything is allowed.
+        """
+        scheme = urlparse(self._start_url).scheme
+        robots_url = f"{scheme}://{self._allowed_domain}/robots.txt"
+        rp = RobotFileParser()
+        rp.set_url(robots_url)
+        try:
+            rp.read()
+            logger.debug(f"Loaded robots.txt from {robots_url}")
+        except Exception as e:
+            logger.debug(f"Could not load robots.txt from {robots_url} — {e} — allowing all URLs")
+        return rp

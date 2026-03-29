@@ -102,6 +102,8 @@ As more links are discovered, more workers are spawned up to `max_workers`. Work
 |-----------|---------|-------------|
 | `max_workers` | `10` | Maximum concurrent worker threads |
 | `items_per_worker` | `5` | Queue items per worker before scaling up |
+| `rate_limit` | `0.0` | Seconds to sleep between fetches per worker (0 = off) |
+| `robots` | `None` | Pre-parsed `RobotFileParser`; if `None`, fetched automatically |
 
 `Fetcher` accepts optional parameters:
 

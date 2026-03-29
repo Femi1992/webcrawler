@@ -1,6 +1,6 @@
 """Web crawler package."""
 
 from .crawler import Crawler
-from .models import PageResult
+from .models import ErrorType, PageResult
 
-__all__ = ["Crawler", "PageResult"]
+__all__ = ["Crawler", "ErrorType", "PageResult"]

@@ -9,6 +9,7 @@ Example:
 
 import sys
 from crawler.crawler import Crawler
+from crawler.logger import configure as configure_logging
 
 
 def main(start_url: str) -> None:
@@ -29,4 +30,5 @@ if __name__ == "__main__":
         print("Usage: python main.py <url>")
         sys.exit(1)
 
+    configure_logging()
     main(sys.argv[1])
